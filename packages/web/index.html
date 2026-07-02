@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="OPAL (Osascript Payload AnaLyzer) — client-side deobfuscator for macOS osascript/JXA stagers. Reveals decoded layers and IOCs without ever executing the payload; nothing is uploaded." />
+    <meta property="og:title" content="OPAL — Osascript Payload AnaLyzer" />
+    <meta property="og:description" content="Client-side macOS osascript/JXA deobfuscator. Decodes every layer and extracts IOCs — the payload is never executed, nothing leaves your browser." />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍎</text></svg>" />
+    <title>OPAL — Osascript Payload AnaLyzer</title>
+  </head>
+  <body>
+    <header>
+      <h1>OPAL <span class="subtitle">· osascript payload analyzer</span></h1>
+      <p class="note">🔒 Runs entirely in your browser. Nothing is uploaded. The payload is never executed.</p>
+    </header>
+    <main>
+      <section class="input">
+        <textarea id="input" rows="6" placeholder="Paste an osascript / JXA one-liner…" spellcheck="false"></textarea>
+        <div class="controls">
+          <button id="run">Deobfuscate</button>
+          <button id="paste" class="secondary" title="Paste clipboard contents into the input">Paste from clipboard</button>
+          <label><input type="checkbox" id="defang" checked /> Defang IOCs</label>
+        </div>
+      </section>
+      <section id="results"></section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "opal",
+  "private": true,
+  "version": "1.0.0",
+  "description": "OPAL (Osascript Payload AnaLyzer) — client-side deobfuscator for macOS osascript/JXA stagers; reveals decoded layers and IOCs without executing the payload.",
+  "license": "ISC",
+  "author": "Konrad Klawikowski",
+  "workspaces": [
+    "packages/engine",
+    "packages/web"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "build:web": "npm run build --workspace=packages/web"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "vite": "8.1.2"
+  }
+}

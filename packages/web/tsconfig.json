@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "lib": ["ES2022", "DOM", "WebWorker"], "types": ["vitest/globals"] },
+  "include": ["src", "test"]
+}
