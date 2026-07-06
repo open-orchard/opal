@@ -1,8 +1,9 @@
-import type { EngineResult, EngineError, Layer, SandboxRunner, SandboxResult, Technique } from './types';
+import type { EngineResult, EngineError, Layer, SandboxRunner, SandboxResult, Technique, TargetArtifact } from './types';
 import { extractSource } from './parser';
 import { extractIocs } from './iocs';
 import { isLayer, guessTechnique, decodeBase64Layer } from './classifier';
 import { looksLikeAppleScript, decodeAppleScript } from './applescript';
+import { deriveCapabilities } from './capabilities';
 
 function hashSource(s: string): string {
   // djb2 — small, stable key for the seen-set
@@ -11,9 +12,6 @@ function hashSource(s: string): string {
   return String(h >>> 0);
 }
 
-/**
- * Peel purely-static layers (osascript `-e` wrappers and base64 blobs)
- */
 function staticPeel(s: string): string {
   let cur = s;
   const seen = new Set<string>();
@@ -49,6 +47,16 @@ export async function deobfuscate(
   ];
   let capped: { source: string; depth: number } | null = null;
 
+  const capTexts: string[] = [];
+  const targets: TargetArtifact[] = [];
+  const targetKeys = new Set<string>();
+  const pushTargets = (list: TargetArtifact[]) => {
+    for (const t of list) {
+      const key = `${t.label}|${t.path}`;
+      if (!targetKeys.has(key)) { targetKeys.add(key); targets.push(t); }
+    }
+  };
+
   const iocKeys = new Set<string>();
   const pushIocs = (text: string, depth: number, source: string) => {
     for (const ioc of extractIocs(text, depth, source)) {
@@ -73,7 +81,9 @@ export async function deobfuscate(
     try {
       const decodedB64 = decodeBase64Layer(source);
       if (looksLikeAppleScript(source)) {
-        result = decodeAppleScript(source);
+        const asr = decodeAppleScript(source);
+        pushTargets(asr.targets);
+        result = asr;
         technique = 'applescript';
       } else if (decodedB64 !== null) {
         result = { capturedStrings: [decodedB64], events: [], errors: [], unsupportedCalls: [] };
@@ -91,6 +101,8 @@ export async function deobfuscate(
     for (const msg of result.errors) errors.push({ message: msg, layerDepth: depth });
 
     layers.push({ depth, source, technique, output: result.capturedStrings, events: result.events });
+    for (const out of result.capturedStrings) capTexts.push(out);
+    for (const ev of result.events) capTexts.push(ev.detail);
 
     pushIocs(source, depth, 'source');
     for (const ev of result.events) pushIocs(ev.detail, depth, ev.kind);
@@ -118,5 +130,15 @@ export async function deobfuscate(
     pushIocs(final, capped.depth, 'static-decode');
   }
 
-  return { layers, iocs, unsupportedCalls, errors, notes };
+  for (const t of targets) capTexts.push(`${t.label} ${t.path}`);
+  const capabilities = deriveCapabilities(capTexts);
+  return {
+    layers,
+    iocs,
+    unsupportedCalls,
+    errors,
+    notes,
+    ...(capabilities.length ? { capabilities } : {}),
+    ...(targets.length ? { targets } : {}),
+  };
 }

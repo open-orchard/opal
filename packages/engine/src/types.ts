@@ -1,7 +1,7 @@
 export type Technique = 'xor' | 'base64' | 'charcode' | 'reverse' | 'applescript' | 'plain' | 'unknown';
 
 export interface SandboxEvent {
-  kind: 'jxa-call' | 'network' | 'shell' | 'eval' | 'console';
+  kind: 'jxa-call' | 'network' | 'shell' | 'eval' | 'console' | 'dialog';
   detail: string;
 }
 
@@ -39,10 +39,27 @@ export interface EngineError {
   layerDepth: number;
 }
 
+/** A behavioral capabilities heuristically derived from extracted code. */
+export interface Capability {
+  tag: string;
+  evidence: string;
+}
+
+/** A target artifact enumerated from an AppleScript list-of-pairs map (e.g. a wallet/browser-data map). */
+export interface TargetArtifact {
+  label: string;
+  path: string;
+}
+
 export interface EngineResult {
   layers: Layer[];
   iocs: IOC[];
   unsupportedCalls: string[];
   errors: EngineError[];
+  /** Advisory messages (e.g. depth-cap reached, static decode applied). */
   notes?: string[];
+  /** Behavioral capabilities (TTPs) derived from extracted code. */
+  capabilities?: Capability[];
+  /** Target artifacts enumerated from list-maps (paths to be stolen). */
+  targets?: TargetArtifact[];
 }
