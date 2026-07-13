@@ -1,5 +1,5 @@
 import type { IOC, IOCType } from './types';
-import { decodeBase64Layer } from './classifier';
+import { decodeBase64LayerSync } from './classifier';
 
 const PATTERNS: Array<{ type: IOCType; re: RegExp }> = [
   { type: 'url', re: /\bhttps?:\/\/[^\s'"`)\\]+/gi },
@@ -13,6 +13,7 @@ const PATTERNS: Array<{ type: IOCType; re: RegExp }> = [
   // Require whitespace after the keyword so shell commands match but JS calls
   // like `x.open(` / `.curl(` do not (the `(` fails the lookahead).
   // `id` is intentionally omitted: it collides with ubiquitous JS (`var id = …`)
+  // and real shell `"id"` is quote-terminated (fails the \s lookahead) anyway.
   { type: 'command', re: /\b(?:base64|bash|caffeinate|chmod|crontab|codesign|cp|csrutil|curl|ditto|dscl|find|funzip|gzip|gunzip|grep|hdiutil|hostname|ioreg|kill|killall|launchctl|mktemp|mv|networksetup|node|nohup|open|osacompile|osanative|osascript|pbcopy|pbpaste|perl|pkill|plutil|python|python3|rm|ruby|say|screencapture|security|softwareupdate|spctl|sqlite3|sw_vers|system_profiler|tar|unzip|wget|whoami|xattr|zip)(?=\s)[^\n'"]*/g },
   { type: 'base64', re: /[A-Za-z0-9+/]{40,}={0,2}/g },
 ];
@@ -23,10 +24,9 @@ export function extractIocs(text: string, layerDepth: number, source: string): I
   for (const { type, re } of PATTERNS) {
     for (const m of text.matchAll(re)) {
       const value = m[0].trim();
-      // A base64 "IOC" is only meaningful if it decodes to printable text
       let decoded: string | undefined;
       if (type === 'base64') {
-        const d = decodeBase64Layer(value);
+        const d = decodeBase64LayerSync(value);
         if (d === null) continue;
         decoded = d;
       }

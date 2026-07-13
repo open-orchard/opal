@@ -6,14 +6,13 @@ export interface WorkerLike {
   onmessage: ((e: { data: SandboxResult }) => void) | null;
 }
 
+/** Default factory builds the real browser Worker from the bundled entry. */
 function defaultFactory(): WorkerLike {
   return new Worker(new URL('./sandbox.worker.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike;
 }
 
-/**
- * Browser SandboxRunner. Runs untrusted decoders in a Web Worker and enforces
- * a hard wall-clock timeout via terminate()
- */
+ // Browser SandboxRunner. Runs untrusted decoders in a Web Worker and enforces
+ // a hard wall-clock timeout via terminate()
 export function createWorkerRunner(factory: () => WorkerLike = defaultFactory): SandboxRunner {
   return {
     run(source, opts) {

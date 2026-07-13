@@ -6,10 +6,12 @@ import type { SandboxResult, SandboxEvent, TargetArtifact } from './types';
  * uses `app.doShellScript(...)`, camelCase, no `tell application` blocks).
  */
 export function looksLikeAppleScript(source: string): boolean {
+  const unquoted = source.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, '');
   return (
-    /\bdo\s+shell\s+script\b/.test(source) ||
-    /\btell\s+application\b/.test(source) ||
-    /\bon\s+run\b/.test(source)
+    /\bdo\s+shell\s+script\b/.test(unquoted) ||
+    /\btell\s+application\b/.test(unquoted) ||
+    /\bon\s+run\b/.test(unquoted) ||
+    /\bset\s+the\s+clipboard\s+to\b/.test(unquoted)
   );
 }
 
@@ -66,6 +68,8 @@ function evalTerm(term: string, vars: Record<string, string>): string {
   if (lit) return unescapeLiteral(lit[1]);
   const sys = t.match(/^system\s+attribute\s+"([^"]+)"$/i);
   if (sys) return `<${sys[1]}>`;
+  const ascii = t.match(/^(?:ASCII character|character id)\s+(\d+)$/i);
+  if (ascii) return String.fromCharCode(Number(ascii[1]));
   if (Object.prototype.hasOwnProperty.call(vars, t)) return vars[t];
   return `<${t}>`;
 }
@@ -79,12 +83,36 @@ function evalExpr(expr: string, vars: Record<string, string>): string {
   return splitConcat(expr).map((p) => evalTerm(p, vars)).join('');
 }
 
-/** Strip a trailing `)` left by a `(do shell script …)` wrapper (unbalanced parens). */
+// Strip a trailing `)` left by a `(do shell script …)` wrapper (unbalanced parens). 
 function stripWrappingParens(expr: string): string {
   let e = expr.trim();
   const count = (re: RegExp) => (e.match(re) ?? []).length;
   while (e.endsWith(')') && count(/\)/g) > count(/\(/g)) e = e.slice(0, -1).trim();
   return e;
+}
+
+// Resolve the common shell-cipher idiom `echo '<text>' | tr 'SET1' 'SET2'`
+function resolveShellCipher(cmd: string): string {
+  const m = cmd.match(/^echo\s+'([^']*)'\s*\|\s*tr\s+'([^']*)'\s+'([^']*)'\s*$/);
+  if (!m) return cmd;
+  const [, text, from, to] = m;
+  const expand = (set: string): string[] => {
+    const out: string[] = [];
+    for (let i = 0; i < set.length; i++) {
+      if (set[i + 1] === '-' && set[i + 2] !== undefined) {
+        for (let c = set.charCodeAt(i); c <= set.charCodeAt(i + 2); c++) out.push(String.fromCharCode(c));
+        i += 2;
+      } else {
+        out.push(set[i]);
+      }
+    }
+    return out;
+  };
+  const fromChars = expand(from);
+  const toChars = expand(to);
+  if (fromChars.length !== toChars.length || fromChars.length === 0) return cmd;
+  const map = new Map(fromChars.map((c, i) => [c, toChars[i]]));
+  return text.replace(/./gs, (c) => map.get(c) ?? c);
 }
 
 // Resolve the RHS of a `set VAR to <rhs>` statement symbolically.
@@ -93,7 +121,7 @@ function resolveSetRhs(
   varName: string,
   vars: Record<string, string>,
 ): string | null {
-  // 1: do shell script "echo LITERAL" (optionally wrapped in parens)
+  // Rule 1: do shell script "echo LITERAL" (optionally wrapped in parens)
   const dssRaw = rhs.match(/^\(?\s*do\s+shell\s+script\s+"((?:[^"\\]|\\.)*)"\s*\)?$/i);
   if (dssRaw) {
     const body = unescapeLiteral(dssRaw[1]);
@@ -110,14 +138,17 @@ function resolveSetRhs(
   // 2: list/map literal — skip
   if (rhs.trim().startsWith('{')) return null;
 
-  // Rule 3: partial resolution
+  // Rule 3: partial resolution. A fully-unresolved RHS echoes back as
+  // `<{whole rhs text}>` (evalTerm's generic fallback) — collapse that to
+  // `<varName>` so later references to this var don't inline a large
+  // unresolved sub-expression (e.g. a `display dialog` prompt) every time.
+  // Deliberately-shaped placeholders like `<USER>` (from `system attribute`,
+  // resolved inside evalExpr itself) don't match this and pass through.
   const resolved = evalExpr(rhs, vars);
   return resolved === `<${rhs.trim()}>` ? `<${varName}>` : resolved;
 }
 
-
-  // Basic, static AppleScript decoder, no execution
-
+// Basic, static AppleScript decoder, no execution
 export function decodeAppleScript(source: string): SandboxResult & { targets: TargetArtifact[] } {
   const events: SandboxEvent[] = [];
   const capturedStrings: string[] = [];
@@ -134,9 +165,16 @@ export function decodeAppleScript(source: string): SandboxResult & { targets: Ta
   for (const m of source.matchAll(/\bdo\s+shell\s+script\s+(.+?)\s*$/gm)) {
     if (isInsideStringLiteral(source, m.index)) continue;
     const withClauseStripped = m[1].replace(/\s+(with|without|as|in)\s+.*$/i, '').trim();
-    const expr = stripWrappingParens(withClauseStripped);
-    const cmd = evalExpr(expr, vars);
-    events.push({ kind: 'shell', detail: cmd });
+    const credMatch = withClauseStripped.match(
+      /^([\s\S]+?)\s+user\s+name\s+([\s\S]+?)\s+password\s+([\s\S]+?)$/i,
+    );
+    const commandExpr = credMatch ? credMatch[1] : withClauseStripped;
+    const expr = stripWrappingParens(commandExpr);
+    const cmd = resolveShellCipher(evalExpr(expr, vars));
+    const detail = credMatch
+      ? `${cmd} [credentials supplied: user name ${evalExpr(credMatch[2], vars)} password ${evalExpr(credMatch[3], vars)}]`
+      : cmd;
+    events.push({ kind: 'shell', detail });
     capturedStrings.push(cmd);
   }
 
@@ -146,6 +184,52 @@ export function decodeAppleScript(source: string): SandboxResult & { targets: Ta
     const prompt = evalTerm(m[1], vars);
     const harvests = /\bwith\s+hidden\s+answer\b/i.test(m[2]);
     events.push({ kind: 'dialog', detail: harvests ? `${prompt} [captures password]` : prompt });
+  }
+
+  // 3.1. do JavaScript "..." in ... → browser-injection surface
+  for (const m of source.matchAll(/\bdo\s+JavaScript\s+("(?:[^"\\]|\\.)*"|[A-Za-z_]\w*)/gi)) {
+    if (isInsideStringLiteral(source, m.index)) continue;
+    const js = evalTerm(m[1], vars);
+    events.push({ kind: 'browser-injection', detail: js });
+    capturedStrings.push(js);
+  }
+
+  // 3.2. keystroke "..." (System Events GUI scripting) → credential-automation
+  // surface
+  for (const m of source.matchAll(/\bkeystroke\s+("(?:[^"\\]|\\.)*"|[A-Za-z_]\w*)/gi)) {
+    if (isInsideStringLiteral(source, m.index)) continue;
+    const typed = evalTerm(m[1], vars);
+    events.push({ kind: 'gui-scripting', detail: `keystroke ${typed}` });
+  }
+
+  // 3.3. make (new) login item ... (System Events login-item persistence) →
+  // the payload's auto-relaunch-at-login mechanism
+  for (const m of source.matchAll(/\bmake\s+(?:new\s+)?login item\b[^\n]*/gi)) {
+    if (isInsideStringLiteral(source, m.index)) continue;
+    events.push({ kind: 'login-item', detail: m[0].trim() });
+  }
+
+  // 3.4. do script "..." (Terminal.app/iTerm) → the macOS ClickFix execution
+  for (const m of source.matchAll(/\bdo\s+script\s+("(?:[^"\\]|\\.)*"|[A-Za-z_]\w*)/gi)) {
+    if (isInsideStringLiteral(source, m.index)) continue;
+    const cmd = evalTerm(m[1], vars);
+    events.push({ kind: 'terminal-app', detail: `Terminal do script ${cmd}` });
+    capturedStrings.push(cmd);
+  }
+
+  // 3.5. set the clipboard to <expr> → ClickFix-style clipboard injection
+  for (const m of source.matchAll(/\bset\s+the\s+clipboard\s+to\s+([^\n]+)/gi)) {
+    if (isInsideStringLiteral(source, m.index)) continue;
+    const payload = evalExpr(m[1].trim(), vars);
+    events.push({ kind: 'clipboard-write', detail: `set the clipboard to ${payload}` });
+    capturedStrings.push(payload);
+  }
+
+  // 3.6. make new outgoing message with properties {...} (Mail.app automation)
+  // → an alternate exfiltration channel to the curl-based sinks
+  for (const m of source.matchAll(/\bmake\s+new\s+outgoing\s+message\s+with\s+properties\s*\{[^}]*\}/gi)) {
+    if (isInsideStringLiteral(source, m.index)) continue;
+    events.push({ kind: 'mail-compose', detail: m[0].replace(/\s+/g, ' ').trim() });
   }
 
   // 4. run script <expr> → recover the source and let the orchestrator recurse on it

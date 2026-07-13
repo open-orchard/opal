@@ -1,12 +1,8 @@
 import type { SandboxResult, SandboxEvent } from './types';
 import { createFoundationStubs } from './foundation-shims';
 
-/**
- * Run a script's decoder logic with sinks neutered, capturing what it
- * WOULD have executed.
- * Uses indirect eval so the value of the final expression (what real
- * osascript prints to stdout) is captured.
- */
+ // Run a script's decoder logic with sinks neutered, capturing what it
+ // WOULD have executed. 
 export function runInSandbox(source: string): SandboxResult {
   const events: SandboxEvent[] = [];
   const errors: string[] = [];
@@ -22,7 +18,7 @@ export function runInSandbox(source: string): SandboxResult {
     g[name] = value;
   };
 
-  const realEval = eval;
+  const realEval = eval; // capture the genuine eval before we override globalThis.eval
 
   const stubs = createFoundationStubs(events, unsupportedCalls);
 

@@ -1,4 +1,5 @@
 import { defang, type EngineResult, type IOC } from '@opal/engine';
+import { highlightCode } from './highlight';
 
 function el(tag: string, attrs: Record<string, string> = {}, text?: string): HTMLElement {
   const node = document.createElement(tag);
@@ -42,13 +43,18 @@ export function renderResult(root: HTMLElement, result: EngineResult, opts: { de
     box.appendChild(h);
     const src = el('pre');
     src.appendChild(copyButton(() => layer.source));
-    src.appendChild(document.createTextNode(layer.source));
+    const srcCode = document.createElement('code');
+    srcCode.innerHTML = highlightCode(layer.source);
+    src.appendChild(srcCode);
     box.appendChild(src);
     if (layer.output.length) {
+      box.appendChild(el('div', { class: 'sinks-label' }, 'decoded output'));
       const out = el('pre');
       const text = layer.output.join('\n');
       out.appendChild(copyButton(() => text));
-      out.appendChild(document.createTextNode(text));
+      const outCode = document.createElement('code');
+      outCode.innerHTML = highlightCode(text);
+      out.appendChild(outCode);
       box.appendChild(out);
     }
     // Intercepted sinks — what the script tried to do (eval/shell/network/etc.),
@@ -67,7 +73,7 @@ export function renderResult(root: HTMLElement, result: EngineResult, opts: { de
     root.appendChild(box);
   }
 
-  // Capabilities - heuristic triage hints, not verdicts
+  // Capabilities (TTPs) — heuristic triage hints, not verdicts.
   if (result.capabilities?.length) {
     const capSection = el('div', { class: 'caps' });
     capSection.appendChild(el('h3', {}, 'Capabilities'));
@@ -79,7 +85,7 @@ export function renderResult(root: HTMLElement, result: EngineResult, opts: { de
     root.appendChild(capSection);
   }
 
-  // Targeted artifacts
+  // Targeted artifacts — paths enumerated from a wallet/browser-data map.
   if (result.targets?.length) {
     const tgtSection = el('div', { class: 'targets' });
     tgtSection.appendChild(el('h3', {}, 'Targeted artifacts'));
@@ -94,7 +100,7 @@ export function renderResult(root: HTMLElement, result: EngineResult, opts: { de
 
   // IOCs
   const grouped = groupByType(result.iocs);
-  // The layer marker only adds information when there is more than one layer;
+  // The layer marker only adds information when there is more than one layer
   const showLayer = result.layers.length > 1;
   if (grouped.size) {
     const all = el('div', { class: 'ioc-group' });
@@ -107,7 +113,6 @@ export function renderResult(root: HTMLElement, result: EngineResult, opts: { de
       for (const ioc of list) {
         const row = el('div', { class: 'ioc' });
         if (showLayer) row.appendChild(el('span', { class: 'layer-badge' }, `L${ioc.layerDepth}`));
-
         const body = el('div', { class: 'ioc-body' });
         const value = fmt(ioc.value);
         body.appendChild(el('code', { class: 'ioc-value' }, value));
@@ -132,7 +137,7 @@ export function renderResult(root: HTMLElement, result: EngineResult, opts: { de
   const diag = el('details', { class: 'diag' });
   diag.appendChild(el('summary', {}, 'Diagnostics'));
   if (result.unsupportedCalls.length) {
-    diag.appendChild(el('p', {}, 'Unsupported calls (these need the v2 CLI):'));
+    diag.appendChild(el('p', {}, 'Unsupported calls:'));
     diag.appendChild(el('pre', {}, result.unsupportedCalls.join('\n')));
   }
   if (result.errors.length) {

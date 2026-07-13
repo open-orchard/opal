@@ -1,7 +1,19 @@
-export type Technique = 'xor' | 'base64' | 'charcode' | 'reverse' | 'applescript' | 'plain' | 'unknown';
+export type Technique = 'xor' | 'base64' | 'charcode' | 'arithmetic' | 'reverse' | 'applescript' | 'plain' | 'unknown';
 
 export interface SandboxEvent {
-  kind: 'jxa-call' | 'network' | 'shell' | 'eval' | 'console' | 'dialog';
+  kind:
+    | 'jxa-call'
+    | 'network'
+    | 'shell'
+    | 'eval'
+    | 'console'
+    | 'dialog'
+    | 'browser-injection'
+    | 'gui-scripting'
+    | 'login-item'
+    | 'terminal-app'
+    | 'clipboard-write'
+    | 'mail-compose';
   detail: string;
 }
 
@@ -39,13 +51,13 @@ export interface EngineError {
   layerDepth: number;
 }
 
-/** A behavioral capabilities heuristically derived from extracted code. */
+// A behavioral capabilities heuristically derived from extracted code.
 export interface Capability {
   tag: string;
   evidence: string;
 }
 
-/** A target artifact enumerated from an AppleScript list-of-pairs map (e.g. a wallet/browser-data map). */
+// A target artifact enumerated from an AppleScript list-of-pairs map (e.g. a wallet/browser-data map).
 export interface TargetArtifact {
   label: string;
   path: string;

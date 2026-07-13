@@ -28,4 +28,12 @@ describe('foundation shims', () => {
     $.NSFileManager.defaultManager.removeItemAtPath_error('/x', null);
     expect(unsupported.some(u => u.includes('NSFileManager'))).toBe(true);
   });
+
+  it('treats NSURLSession dataTaskWithURL as a network sink, not generic unsupported', () => {
+    const { $, events, unsupported } = setup();
+    const url = $.NSURL.URLWithString('https://example.com/benign/exfil');
+    $.NSURLSession.sharedSession.dataTaskWithURL(url);
+    expect(events.some(e => e.kind === 'network' && e.detail.includes('https://example.com/benign/exfil'))).toBe(true);
+    expect(unsupported.some(u => u.includes('dataTaskWithURL'))).toBe(false);
+  });
 });

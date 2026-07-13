@@ -2,6 +2,7 @@ import type { EngineResult, EngineError, Layer, SandboxRunner, SandboxResult, Te
 import { extractSource } from './parser';
 import { extractIocs } from './iocs';
 import { isLayer, guessTechnique, decodeBase64Layer } from './classifier';
+import { gunzipCapturedString } from './base64';
 import { looksLikeAppleScript, decodeAppleScript } from './applescript';
 import { deriveCapabilities } from './capabilities';
 
@@ -12,7 +13,7 @@ function hashSource(s: string): string {
   return String(h >>> 0);
 }
 
-function staticPeel(s: string): string {
+async function staticPeel(s: string): Promise<string> {
   let cur = s;
   const seen = new Set<string>();
   for (let i = 0; i < 100; i++) {
@@ -20,7 +21,7 @@ function staticPeel(s: string): string {
     seen.add(cur);
     const inner = extractSource(cur);
     if (inner !== cur) { cur = inner; continue; }
-    const decoded = decodeBase64Layer(cur);
+    const decoded = await decodeBase64Layer(cur);
     if (decoded !== null) { cur = decoded; continue; }
     break;
   }
@@ -79,7 +80,7 @@ export async function deobfuscate(
     let result: SandboxResult;
     let technique: Technique;
     try {
-      const decodedB64 = decodeBase64Layer(source);
+      const decodedB64 = await decodeBase64Layer(source);
       if (looksLikeAppleScript(source)) {
         const asr = decodeAppleScript(source);
         pushTargets(asr.targets);
@@ -91,6 +92,7 @@ export async function deobfuscate(
       } else {
         result = await runner.run(source, { timeoutMs });
         technique = guessTechnique(source);
+        result = { ...result, capturedStrings: await Promise.all(result.capturedStrings.map(gunzipCapturedString)) };
       }
     } catch (e: unknown) {
       errors.push({ message: e instanceof Error ? e.message : String(e), layerDepth: depth });
@@ -108,7 +110,7 @@ export async function deobfuscate(
     for (const ev of result.events) pushIocs(ev.detail, depth, ev.kind);
     for (const out of result.capturedStrings) {
       pushIocs(out, depth, 'output');
-      if (!isLayer(out)) continue;
+      if (!(await isLayer(out))) continue;
       const next = extractSource(out); // unwrap an osascript `-e` wrapper; base64 stays a blob (decoded when its layer runs)
       if (depth + 1 <= maxDepth) {
         if (!seen.has(hashSource(next))) queue.push({ source: next, depth: depth + 1 });
@@ -121,7 +123,7 @@ export async function deobfuscate(
   // Depth cap hit: statically decode the remaining (non-executing) layers so
   // the analyst still sees the final payload, clearly flagged.
   if (capped) {
-    const final = staticPeel(capped.source);
+    const final = await staticPeel(capped.source);
     notes.push(
       `Reached the depth cap (${maxDepth}). Remaining layers were decoded statically ` +
         `(no code executed); the final payload is shown as layer ${capped.depth}.`,

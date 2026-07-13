@@ -1,18 +1,14 @@
 import type { SandboxEvent } from './types';
 import { base64ToText } from './base64';
 
-/**
- * Build a recording JXA Foundation environment. Every property access and
- * call is logged. Unknown calls are added to `unsupported`.
- * The single implemented recipe is the common base64
- * unpack: NSData.initWithBase64... -> NSString.initWithData... -> .js
- */
+ // Build a recording JXA Foundation environment.
 export function createFoundationStubs(events: SandboxEvent[], unsupported: string[]) {
   const note = (path: string) => {
     events.push({ kind: 'jxa-call', detail: path });
     if (!unsupported.includes(path)) unsupported.push(path);
   };
 
+  // A node carries an optional decoded string value through the chain.
   const makeProxy = (path: string, value?: string): any => {
     const target: any = function () {};
     target.__value = value;
@@ -34,6 +30,15 @@ export function createFoundationStubs(events: SandboxEvent[], unsupported: strin
         }
         if (method.startsWith('initWithData') && args[0] && (args[0] as any).__value !== undefined) {
           return makeProxy(`${path}<string>`, (args[0] as any).__value);
+        }
+        if (method === 'URLWithString' && typeof args[0] === 'string') {
+          return makeProxy(`${path}<url>`, args[0]);
+        }
+        if (/^(?:dataTaskWith|uploadTaskWith|downloadTaskWith)/.test(method)) {
+          const arg0 = args[0];
+          const url = arg0 && (arg0 as any).__value !== undefined ? (arg0 as any).__value : String(arg0 ?? '');
+          events.push({ kind: 'network', detail: `NSURLSession ${method} ${url}`.trim() });
+          return makeProxy(`${path}<task>`, undefined);
         }
         note(`${path}()`);
         return makeProxy(path, t.__value);
